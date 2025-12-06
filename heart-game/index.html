@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Heart Collector</title>
+    <link rel="apple-touch-icon" href="https://em-content.zobj.net/source/apple/354/red-heart_2764-fe0f.png">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: black;
+            overflow: hidden;
+            touch-action: none;
+            font-family: 'Arial', sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        canvas {
+            display: block;
+        }
+        
+        /* UI Layers */
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none; /* Let touches pass through to game by default */
+            z-index: 10;
+        }
+
+        /* Shows when game is won or waiting to start */
+        .active-ui {
+            pointer-events: auto;
+            background-color: rgba(0,0,0,0.7);
+        }
+
+        .message {
+            color: #32CD32;
+            font-size: 8vh;
+            font-weight: bold;
+            text-shadow: 0 0 20px rgba(50, 205, 50, 0.6);
+            margin-bottom: 30px;
+        }
+
+        .btn {
+            background-color: white;
+            color: black;
+            border: 4px solid #32CD32;
+            padding: 20px 50px;
+            font-size: 2rem;
+            border-radius: 50px;
+            cursor: pointer;
+            font-weight: bold;
+            box-shadow: 0 0 15px #32CD32;
+        }
+        
+        .btn:active {
+            transform: scale(0.95);
+            background-color: #eee;
+        }
+
+        /* Helper to hide things */
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="start-screen" class="overlay active-ui">
+        <div class="message" style="color: white;">Ready?</div>
+        <div class="btn" id="start-btn">Tap to Start</div>
+    </div>
+
+    <div id="win-screen" class="overlay hidden">
+        <div class="message">You did it!</div>
+        <div class="btn" id="restart-btn">Play Again ↻</div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // UI Elements
+    const startScreen = document.getElementById('start-screen');
+    const winScreen = document.getElementById('win-screen');
+    const startBtn = document.getElementById('start-btn');
+    const restartBtn = document.getElementById('restart-btn');
+
+    // Audio Context
+    let audioCtx = null;
+
+    // Game State
+    let width, height;
+    let player = { x: 0, y: 0, radius: 40, color: '#32CD32' }; 
+    let targets = [];
+    let particles = [];
+    let gameRunning = false;
+
+    // Config
+    const TARGET_COUNT = 8;
+    const TARGET_SIZE = 30; // Roughly the radius size for hit detection
+
+    // --- Audio System ---
+    function initAudio() {
+        if (!audioCtx) {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AudioContext();
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+    }
+
+    function playDing() {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        osc.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1000, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(1500, audioCtx.currentTime + 0.1); // Upward chirp
+        gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.3);
+    }
+    
+    function playWinSound() {
+        if (!audioCtx) return;
+        [440, 554, 659, 880].forEach((freq, i) => { // A Major chord
+            setTimeout(() => {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.type = 'triangle';
+                osc.frequency.value = freq;
+                gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.6);
+            }, i * 120);
+        });
+    }
+
+    // --- Drawing Helper: Heart ---
+    function drawHeart(ctx, x, y, size, color) {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        // Save context to translate to x,y so we draw centered
+        ctx.save();
+        ctx.translate(x, y - size/4); // Shift slightly up so visual center matches math center
+        
+        // Heart path logic
+        const topCurveHeight = size * 0.3;
+        ctx.moveTo(0, topCurveHeight);
+        ctx.bezierCurveTo(0, 0, -size, 0, -size, topCurveHeight);
+        ctx.bezierCurveTo(-size, (size + topCurveHeight) / 2, 0, size * 0.8 + topCurveHeight, 0, size + topCurveHeight);
+        ctx.bezierCurveTo(0, size * 0.8 + topCurveHeight, size, (size + topCurveHeight) / 2, size, topCurveHeight);
+        ctx.bezierCurveTo(size, 0, 0, 0, 0, topCurveHeight);
+        
+        ctx.fill();
+        ctx.restore();
+    }
+
+    // --- Game Logic ---
+    function resize() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        canvas.width = width;
+        canvas.height = height;
+        if (!gameRunning) {
+            player.x = width / 2;
+            player.y = height / 2;
+        }
+    }
+
+    function initGame() {
+        targets = [];
+        particles = [];
+        
+        // Generate Rainbow Hearts
+        for (let i = 0; i < TARGET_COUNT; i++) {
+            const x = Math.random() * (width - 100) + 50;
+            const y = Math.random() * (height - 100) + 50;
+            
+            // Random Rainbow Color (HSL)
+            // Hue 0-360, Saturation 100%, Lightness 60%
+            const hue = Math.floor(Math.random() * 360);
+            const color = `hsl(${hue}, 100%, 60%)`;
+
+            // Keep away from center start
+            if (Math.hypot(x - width/2, y - height/2) > 150) {
+                targets.push({ x: x, y: y, size: TARGET_SIZE, color: color, active: true });
+            } else {
+                i--; 
+            }
+        }
+        
+        gameRunning = true;
+        winScreen.classList.add('hidden');
+        winScreen.classList.remove('active-ui');
+    }
+
+    function handleWin() {
+        gameRunning = false;
+        playWinSound();
+        winScreen.classList.remove('hidden');
+        winScreen.classList.add('active-ui');
+        
+        // Celebration particles
+        createExplosion(width/2, height/2, '#FF0000');
+        createExplosion(width/2 - 50, height/2, '#FFFF00');
+        createExplosion(width/2 + 50, height/2, '#0000FF');
+    }
+
+    // --- Input Handling ---
+    function updatePlayerPos(x, y) {
+        if (!gameRunning) return;
+        player.x = x;
+        player.y = y;
+    }
+
+    // Start Button
+    startBtn.addEventListener('click', () => {
+        initAudio();
+        startScreen.classList.add('hidden');
+        startScreen.classList.remove('active-ui');
+        initGame();
+    });
+    startBtn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        initAudio();
+        startScreen.classList.add('hidden');
+        startScreen.classList.remove('active-ui');
+        initGame();
+    });
+
+    // Restart Button
+    restartBtn.addEventListener('click', initGame);
+    restartBtn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        initGame();
+    });
+
+    // Movement
+    window.addEventListener('mousemove', e => updatePlayerPos(e.clientX, e.clientY));
+    window.addEventListener('touchmove', e => {
+        e.preventDefault();
+        updatePlayerPos(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: false });
+    
+    // Catch-all touch start for gameplay
+    window.addEventListener('touchstart', e => {
+        if(gameRunning) {
+             updatePlayerPos(e.touches[0].clientX, e.touches[0].clientY);
+        }
+    }, { passive: false });
+
+
+    // --- Animation System ---
+    function createExplosion(x, y, color) {
+        for (let i = 0; i < 15; i++) {
+            particles.push({
+                x: x,
+                y: y,
+                vx: (Math.random() - 0.5) * 15,
+                vy: (Math.random() - 0.5) * 15,
+                life: 1.0,
+                color: color
+            });
+        }
+    }
+
+    function animate() {
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, width, height);
+
+        let activeTargets = 0;
+
+        // Draw Player
+        if(gameRunning) {
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fillStyle = player.color;
+            ctx.shadowBlur = 25;
+            ctx.shadowColor = player.color;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+
+        // Draw Targets (Hearts)
+        targets.forEach(target => {
+            if (target.active) {
+                activeTargets++;
+                
+                // Draw Heart Shape
+                drawHeart(ctx, target.x, target.y, target.size, target.color);
+
+                // Collision Detection
+                // We use simple circle distance logic for the "hitbox" of the heart
+                if (gameRunning) {
+                    const dist = Math.hypot(player.x - target.x, player.y - target.y);
+                    if (dist < player.radius + target.size) {
+                        target.active = false;
+                        createExplosion(target.x, target.y, target.color); // Particles match heart color
+                        playDing();
+                    }
+                }
+            }
+        });
+
+        // Draw Particles
+        particles.forEach((p, index) => {
+            p.x += p.vx;
+            p.y += p.vy;
+            p.life -= 0.02;
+            if (p.life > 0) {
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+            } else {
+                particles.splice(index, 1);
+            }
+        });
+
+        // Win Check
+        if (gameRunning && activeTargets === 0) {
+            handleWin();
+        }
+
+        requestAnimationFrame(animate);
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+    animate();
+
+</script>
+</body>
+</html>
