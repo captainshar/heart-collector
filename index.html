@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Heart Collector</title>
+    
     <link rel="apple-touch-icon" href="https://em-content.zobj.net/source/apple/354/red-heart_2764-fe0f.png">
+
     <style>
         body {
             margin: 0;
@@ -31,11 +33,10 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            pointer-events: none; /* Let touches pass through to game by default */
+            pointer-events: none; 
             z-index: 10;
         }
 
-        /* Shows when game is won or waiting to start */
         .active-ui {
             pointer-events: auto;
             background-color: rgba(0,0,0,0.7);
@@ -66,13 +67,27 @@
             background-color: #eee;
         }
 
-        /* Helper to hide things */
         .hidden {
             display: none !important;
+        }
+
+        /* NEW: Score Board */
+        #score-board {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 2.5rem;
+            font-weight: bold;
+            z-index: 5;
+            pointer-events: none;
+            text-shadow: 2px 2px 0 #000;
         }
     </style>
 </head>
 <body>
+
+    <div id="score-board">❤️ 0 / 8</div>
 
     <div id="start-screen" class="overlay active-ui">
         <div class="message" style="color: white;">Ready?</div>
@@ -95,6 +110,7 @@
     const winScreen = document.getElementById('win-screen');
     const startBtn = document.getElementById('start-btn');
     const restartBtn = document.getElementById('restart-btn');
+    const scoreBoard = document.getElementById('score-board');
 
     // Audio Context
     let audioCtx = null;
@@ -105,10 +121,11 @@
     let targets = [];
     let particles = [];
     let gameRunning = false;
+    let score = 0;
 
     // Config
     const TARGET_COUNT = 8;
-    const TARGET_SIZE = 30; // Roughly the radius size for hit detection
+    const TARGET_SIZE = 30; 
 
     // --- Audio System ---
     function initAudio() {
@@ -129,7 +146,7 @@
         gainNode.connect(audioCtx.destination);
         osc.type = 'sine';
         osc.frequency.setValueAtTime(1000, audioCtx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(1500, audioCtx.currentTime + 0.1); // Upward chirp
+        osc.frequency.exponentialRampToValueAtTime(1500, audioCtx.currentTime + 0.1); 
         gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
         gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
         osc.start();
@@ -138,7 +155,7 @@
     
     function playWinSound() {
         if (!audioCtx) return;
-        [440, 554, 659, 880].forEach((freq, i) => { // A Major chord
+        [440, 554, 659, 880].forEach((freq, i) => { 
             setTimeout(() => {
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
@@ -158,11 +175,9 @@
     function drawHeart(ctx, x, y, size, color) {
         ctx.fillStyle = color;
         ctx.beginPath();
-        // Save context to translate to x,y so we draw centered
         ctx.save();
-        ctx.translate(x, y - size/4); // Shift slightly up so visual center matches math center
+        ctx.translate(x, y - size/4); 
         
-        // Heart path logic
         const topCurveHeight = size * 0.3;
         ctx.moveTo(0, topCurveHeight);
         ctx.bezierCurveTo(0, 0, -size, 0, -size, topCurveHeight);
@@ -186,21 +201,22 @@
         }
     }
 
+    function updateScoreDisplay() {
+        scoreBoard.textContent = `❤️ ${score} / ${TARGET_COUNT}`;
+    }
+
     function initGame() {
         targets = [];
         particles = [];
+        score = 0; // Reset Score
+        updateScoreDisplay();
         
-        // Generate Rainbow Hearts
         for (let i = 0; i < TARGET_COUNT; i++) {
             const x = Math.random() * (width - 100) + 50;
             const y = Math.random() * (height - 100) + 50;
-            
-            // Random Rainbow Color (HSL)
-            // Hue 0-360, Saturation 100%, Lightness 60%
             const hue = Math.floor(Math.random() * 360);
             const color = `hsl(${hue}, 100%, 60%)`;
 
-            // Keep away from center start
             if (Math.hypot(x - width/2, y - height/2) > 150) {
                 targets.push({ x: x, y: y, size: TARGET_SIZE, color: color, active: true });
             } else {
@@ -218,8 +234,6 @@
         playWinSound();
         winScreen.classList.remove('hidden');
         winScreen.classList.add('active-ui');
-        
-        // Celebration particles
         createExplosion(width/2, height/2, '#FF0000');
         createExplosion(width/2 - 50, height/2, '#FFFF00');
         createExplosion(width/2 + 50, height/2, '#0000FF');
@@ -232,7 +246,6 @@
         player.y = y;
     }
 
-    // Start Button
     startBtn.addEventListener('click', () => {
         initAudio();
         startScreen.classList.add('hidden');
@@ -247,21 +260,18 @@
         initGame();
     });
 
-    // Restart Button
     restartBtn.addEventListener('click', initGame);
     restartBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
         initGame();
     });
 
-    // Movement
     window.addEventListener('mousemove', e => updatePlayerPos(e.clientX, e.clientY));
     window.addEventListener('touchmove', e => {
         e.preventDefault();
         updatePlayerPos(e.touches[0].clientX, e.touches[0].clientY);
     }, { passive: false });
     
-    // Catch-all touch start for gameplay
     window.addEventListener('touchstart', e => {
         if(gameRunning) {
              updatePlayerPos(e.touches[0].clientX, e.touches[0].clientY);
@@ -289,7 +299,6 @@
 
         let activeTargets = 0;
 
-        // Draw Player
         if(gameRunning) {
             ctx.beginPath();
             ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
@@ -300,28 +309,24 @@
             ctx.shadowBlur = 0;
         }
 
-        // Draw Targets (Hearts)
         targets.forEach(target => {
             if (target.active) {
                 activeTargets++;
-                
-                // Draw Heart Shape
                 drawHeart(ctx, target.x, target.y, target.size, target.color);
 
-                // Collision Detection
-                // We use simple circle distance logic for the "hitbox" of the heart
                 if (gameRunning) {
                     const dist = Math.hypot(player.x - target.x, player.y - target.y);
                     if (dist < player.radius + target.size) {
                         target.active = false;
-                        createExplosion(target.x, target.y, target.color); // Particles match heart color
+                        score++; // Increment Score
+                        updateScoreDisplay(); // Update UI
+                        createExplosion(target.x, target.y, target.color);
                         playDing();
                     }
                 }
             }
         });
 
-        // Draw Particles
         particles.forEach((p, index) => {
             p.x += p.vx;
             p.y += p.vy;
@@ -338,7 +343,6 @@
             }
         });
 
-        // Win Check
         if (gameRunning && activeTargets === 0) {
             handleWin();
         }
