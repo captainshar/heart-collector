@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Heart Collector</title>
-    
+    <title>Leona's Game</title>
     <link rel="apple-touch-icon" href="https://em-content.zobj.net/source/apple/354/red-heart_2764-fe0f.png">
 
     <style>
@@ -22,7 +21,6 @@
             display: block;
         }
         
-        /* UI Layers */
         .overlay {
             position: absolute;
             top: 0;
@@ -39,7 +37,7 @@
 
         .active-ui {
             pointer-events: auto;
-            background-color: rgba(0,0,0,0.7);
+            background-color: rgba(0,0,0,0.8);
         }
 
         .message {
@@ -48,6 +46,7 @@
             font-weight: bold;
             text-shadow: 0 0 20px rgba(50, 205, 50, 0.6);
             margin-bottom: 30px;
+            text-align: center;
         }
 
         .btn {
@@ -60,6 +59,7 @@
             cursor: pointer;
             font-weight: bold;
             box-shadow: 0 0 15px #32CD32;
+            transition: transform 0.1s;
         }
         
         .btn:active {
@@ -70,24 +70,21 @@
         .hidden {
             display: none !important;
         }
-
-        /* NEW: Score Board */
-        #score-board {
+        
+        /* Level Indicator */
+        #level-indicator {
             position: absolute;
             top: 20px;
-            left: 20px;
-            color: white;
-            font-size: 2.5rem;
-            font-weight: bold;
-            z-index: 5;
+            right: 20px;
+            color: #555;
+            font-size: 1.5rem;
             pointer-events: none;
-            text-shadow: 2px 2px 0 #000;
         }
     </style>
 </head>
 <body>
 
-    <div id="score-board">❤️ 0 / 8</div>
+    <div id="level-indicator">Level 1</div>
 
     <div id="start-screen" class="overlay active-ui">
         <div class="message" style="color: white;">Ready?</div>
@@ -95,8 +92,8 @@
     </div>
 
     <div id="win-screen" class="overlay hidden">
-        <div class="message">You did it!</div>
-        <div class="btn" id="restart-btn">Play Again ↻</div>
+        <div class="message" id="win-text">You did it!</div>
+        <div class="btn" id="action-btn">Next Level ➜</div>
     </div>
 
     <canvas id="gameCanvas"></canvas>
@@ -109,22 +106,26 @@
     const startScreen = document.getElementById('start-screen');
     const winScreen = document.getElementById('win-screen');
     const startBtn = document.getElementById('start-btn');
-    const restartBtn = document.getElementById('restart-btn');
-    const scoreBoard = document.getElementById('score-board');
+    const actionBtn = document.getElementById('action-btn');
+    const winText = document.getElementById('win-text');
+    const levelInd = document.getElementById('level-indicator');
 
     // Audio Context
     let audioCtx = null;
 
     // Game State
     let width, height;
-    let player = { x: 0, y: 0, radius: 40, color: '#32CD32' }; 
+    let player = { x: 0, y: 0, radius: 45, color: '#32CD32' }; 
     let targets = [];
     let particles = [];
     let gameRunning = false;
     let score = 0;
+    
+    // Level State
+    let currentLevel = 1;
+    const MAX_LEVELS = 2;
 
     // Config
-    const TARGET_COUNT = 8;
     const TARGET_SIZE = 30; 
 
     // --- Audio System ---
@@ -177,14 +178,12 @@
         ctx.beginPath();
         ctx.save();
         ctx.translate(x, y - size/4); 
-        
         const topCurveHeight = size * 0.3;
         ctx.moveTo(0, topCurveHeight);
         ctx.bezierCurveTo(0, 0, -size, 0, -size, topCurveHeight);
         ctx.bezierCurveTo(-size, (size + topCurveHeight) / 2, 0, size * 0.8 + topCurveHeight, 0, size + topCurveHeight);
         ctx.bezierCurveTo(0, size * 0.8 + topCurveHeight, size, (size + topCurveHeight) / 2, size, topCurveHeight);
         ctx.bezierCurveTo(size, 0, 0, 0, 0, topCurveHeight);
-        
         ctx.fill();
         ctx.restore();
     }
@@ -201,24 +200,38 @@
         }
     }
 
-    function updateScoreDisplay() {
-        scoreBoard.textContent = `❤️ ${score} / ${TARGET_COUNT}`;
-    }
-
-    function initGame() {
+    function initLevel() {
         targets = [];
         particles = [];
-        score = 0; // Reset Score
-        updateScoreDisplay();
+        score = 0;
         
-        for (let i = 0; i < TARGET_COUNT; i++) {
+        // Define difficulty based on level
+        let targetCount = 5;
+        if (currentLevel === 2) targetCount = 10;
+        
+        levelInd.textContent = `Level ${currentLevel}`;
+
+        for (let i = 0; i < targetCount; i++) {
             const x = Math.random() * (width - 100) + 50;
             const y = Math.random() * (height - 100) + 50;
             const hue = Math.floor(Math.random() * 360);
             const color = `hsl(${hue}, 100%, 60%)`;
+            
+            // Random Drift velocity (Level 2 only)
+            let vx = 0, vy = 0;
+            if (currentLevel === 2) {
+                vx = (Math.random() - 0.5) * 1.5;
+                vy = (Math.random() - 0.5) * 1.5;
+            }
 
             if (Math.hypot(x - width/2, y - height/2) > 150) {
-                targets.push({ x: x, y: y, size: TARGET_SIZE, color: color, active: true });
+                targets.push({ 
+                    x: x, y: y, 
+                    vx: vx, vy: vy,
+                    size: TARGET_SIZE, 
+                    color: color, 
+                    active: true 
+                });
             } else {
                 i--; 
             }
@@ -234,12 +247,31 @@
         playWinSound();
         winScreen.classList.remove('hidden');
         winScreen.classList.add('active-ui');
-        createExplosion(width/2, height/2, '#FF0000');
-        createExplosion(width/2 - 50, height/2, '#FFFF00');
-        createExplosion(width/2 + 50, height/2, '#0000FF');
+        
+        createExplosion(width/2, height/2, '#32CD32');
+
+        if (currentLevel < MAX_LEVELS) {
+            // Level Complete
+            winText.textContent = "Great Job!";
+            actionBtn.textContent = "Next Level ➜";
+            // Pre-set next action
+            actionBtn.onclick = () => {
+                currentLevel++;
+                initLevel();
+            };
+        } else {
+            // Game Complete
+            winText.textContent = "YOU WIN!";
+            actionBtn.textContent = "Play Again ↻";
+            // Reset to Level 1
+            actionBtn.onclick = () => {
+                currentLevel = 1;
+                initLevel();
+            };
+        }
     }
 
-    // --- Input Handling ---
+    // --- Input ---
     function updatePlayerPos(x, y) {
         if (!gameRunning) return;
         player.x = x;
@@ -250,21 +282,18 @@
         initAudio();
         startScreen.classList.add('hidden');
         startScreen.classList.remove('active-ui');
-        initGame();
+        initLevel();
     });
     startBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
         initAudio();
         startScreen.classList.add('hidden');
         startScreen.classList.remove('active-ui');
-        initGame();
+        initLevel();
     });
-
-    restartBtn.addEventListener('click', initGame);
-    restartBtn.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        initGame();
-    });
+    
+    // Wire up action button initially to prevent errors
+    actionBtn.onclick = () => { currentLevel = 1; initLevel(); };
 
     window.addEventListener('mousemove', e => updatePlayerPos(e.clientX, e.clientY));
     window.addEventListener('touchmove', e => {
@@ -279,7 +308,7 @@
     }, { passive: false });
 
 
-    // --- Animation System ---
+    // --- Animation ---
     function createExplosion(x, y, color) {
         for (let i = 0; i < 15; i++) {
             particles.push({
@@ -300,6 +329,7 @@
         let activeTargets = 0;
 
         if(gameRunning) {
+            // Draw Player Circle
             ctx.beginPath();
             ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
             ctx.fillStyle = player.color;
@@ -307,19 +337,35 @@
             ctx.shadowColor = player.color;
             ctx.fill();
             ctx.shadowBlur = 0;
+
+            // Draw Score INSIDE Player
+            ctx.fillStyle = "black";
+            ctx.font = "bold 40px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(score, player.x, player.y + 2); // +2 for visual centering
         }
 
         targets.forEach(target => {
             if (target.active) {
                 activeTargets++;
+                
+                // Move Hearts (Level 2 logic)
+                if (currentLevel === 2) {
+                    target.x += target.vx;
+                    target.y += target.vy;
+                    // Bounce off walls
+                    if (target.x < 0 || target.x > width) target.vx *= -1;
+                    if (target.y < 0 || target.y > height) target.vy *= -1;
+                }
+
                 drawHeart(ctx, target.x, target.y, target.size, target.color);
 
                 if (gameRunning) {
                     const dist = Math.hypot(player.x - target.x, player.y - target.y);
                     if (dist < player.radius + target.size) {
                         target.active = false;
-                        score++; // Increment Score
-                        updateScoreDisplay(); // Update UI
+                        score++; 
                         createExplosion(target.x, target.y, target.color);
                         playDing();
                     }
